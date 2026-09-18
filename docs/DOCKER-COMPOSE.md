@@ -17,7 +17,7 @@ or tightly-controlled hosts, and anyone who does not want to operate Kubernetes.
 **Does not suit** high availability — one host, so a reboot is downtime; nor
 horizontal scaling; nor rolling upgrades. For those, use the Kubernetes guide.
 
-All services run on one internal Docker network. Only Caddy publishes ports (80
+All services run on one internal Docker network. Only nginx publishes ports (80
 and 443), so PostgreSQL, Vault, MinIO and Hydra's admin API are never reachable
 from outside the machine.
 
@@ -151,13 +151,24 @@ First run pulls several GB of images. Order is handled for you: Hydra's
 migration runs to completion before Hydra starts, and MinIO's bucket is created
 before the log aggregator needs it.
 
-Watch Caddy obtain certificates:
+Certificates are obtained automatically. On a first boot the stack briefly uses
+a self-signed certificate so nginx can start, then certbot replaces it with the
+real one — usually within a minute of `docker compose up -d`.
 
 ```bash
-docker compose logs -f caddy
+docker compose logs -f certbot     # issuance
+docker compose logs -f nginx       # serving
 ```
 
-Issuance takes 10–30 seconds per hostname once DNS resolves.
+Confirm you have a real certificate rather than the temporary one:
+
+```bash
+echo | openssl s_client -connect localhost:443 -servername $(grep ^APP_HOST= ../.env | cut -d= -f2) 2>/dev/null \
+  | openssl x509 -noout -issuer
+```
+
+`issuer=C=US, O=Let's Encrypt...` means it worked. `issuer=CN=<your host>` means
+it is still the self-signed placeholder — see Troubleshooting.
 
 ---
 
@@ -260,8 +271,8 @@ The defaults are safe to expose, but for production also:
   sudo ufw allow 22,80,443/tcp && sudo ufw enable
   ```
 - **Keep Hydra's admin API internal.** It creates and deletes OAuth clients with
-  no authentication of its own. The supplied `Caddyfile` deliberately does not
-  route to it. Use:
+  no authentication of its own. The supplied nginx configuration deliberately
+  does not route to it. Use:
   ```bash
   docker compose exec hydra hydra list clients --endpoint http://127.0.0.1:4445
   ```
@@ -278,7 +289,9 @@ The defaults are safe to expose, but for production also:
 
 | Symptom | Cause and fix |
 |---|---|
-| Caddy cannot get a certificate | DNS does not resolve to this host yet, or port 80 is blocked. Check with `dig +short app.<domain>` and `docker compose logs caddy`. |
+| Certificate stays self-signed | certbot could not validate. DNS must resolve to this host and port 80 must be reachable from the internet. `dig +short app.<domain>`, then `docker compose logs certbot`. Re-run with `docker compose restart certbot`. |
+| `nginx` restarting | usually a certificate file missing. `docker compose up certs-init` recreates the temporary one, then `docker compose restart nginx`. |
+| Let's Encrypt rate limit hit | set `ACME_ENV=staging` in `.env` while testing, then switch back to `prod`. |
 | `hydra-migrate` exits non-zero | Database not reachable or the password disagrees. `docker compose logs hydra-migrate`; confirm `DB_PASSWORD` and `DB_PASSWORD_URLENCODED` match. |
 | API returns 500 on anything using secrets | `VAULT_TOKEN` empty or expired, or Vault sealed. `docker compose exec vault vault status`. |
 | Vault sealed after reboot | Expected. Run `./vault-init.sh`. |
@@ -303,7 +316,8 @@ contain hostnames and tokens. Never send `.env` or `vault-keys.txt`.
 
 | Service | Port (internal) | Published | Purpose |
 |---|---|---|---|
-| caddy | 80, 443 | **yes** | TLS termination, routing |
+| nginx | 80, 443 | **yes** | TLS termination, routing |
+| certbot | — | no | obtains and renews certificates |
 | ui | 3000 | no | web interface |
 | authsec | 4331 | no | API |
 | hydra | 4444 public, 4445 admin | no | OAuth2 / OIDC |

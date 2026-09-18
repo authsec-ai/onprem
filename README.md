@@ -26,7 +26,7 @@ cd docker-compose && docker compose up -d    # one VM → docs/DOCKER-COMPOSE.md
 | Horizontal scaling | yes | no |
 | Rolling upgrades | yes | brief restart |
 | Needs | K8s 1.24+, ingress controller, StorageClass | Docker 24+, ports 80/443 |
-| TLS | cert-manager | automatic, via Caddy |
+| TLS | cert-manager | Let's Encrypt, via nginx + certbot |
 
 Both deploy the same product: the AuthSec API and web UI, Ory Hydra for
 OAuth2/OIDC, PostgreSQL, HashiCorp Vault, a log pipeline and object storage.

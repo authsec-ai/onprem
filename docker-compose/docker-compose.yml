@@ -7,7 +7,7 @@
 #  this directory points at it, so plain `docker compose` picks it up.
 #  See:        ../DEPLOY-DOCKER-COMPOSE.md
 #
-#  Only Caddy publishes ports. Everything else talks over the internal
+#  Only nginx publishes ports. Everything else talks over the internal
 #  "authsec" network, so the database, Vault, MinIO and the Hydra admin API are
 #  never reachable from outside the host.
 # =============================================================================
@@ -31,8 +31,8 @@ volumes:
   vault-data:
   vault-file:
   minio-data:
-  caddy-data:
-  caddy-config:
+  letsencrypt:
+  certbot-webroot:
 
 services:
 
@@ -275,11 +275,32 @@ services:
       JWT_DEF_SECRET: ${JWT_DEF_SECRET}
       JWT_SDK_SECRET: ${JWT_SDK_SECRET}
 
-  # --------------------------------------------- Caddy: TLS + the only ports --
-  caddy:
-    image: caddy:2
+  # ------------------------------------ nginx: TLS + the only published ports --
+  # First boot: certs-init drops a self-signed certificate so nginx can start,
+  # nginx then serves the ACME challenge on :80, certbot swaps in the real
+  # certificate, and nginx reloads on its own timer.
+  certs-init:
+    image: alpine:3.20
+    networks: [authsec]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - ./nginx/init-certs.sh:/init-certs.sh:ro
+    environment:
+      APP_HOST: ${APP_HOST}
+      API_HOST: ${API_HOST}
+      OAUTH_HOST: ${OAUTH_HOST}
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache openssl >/dev/null && /init-certs.sh"]
+    restart: "no"
+
+  nginx:
+    image: nginx:1.27-alpine
     <<: [*restart, *logging]
     networks: [authsec]
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
+      ui:      { condition: service_started }
+      authsec: { condition: service_started }
+      hydra:   { condition: service_started }
     ports:
       - "80:80"
       - "443:443"
@@ -287,9 +308,44 @@ services:
       APP_HOST: ${APP_HOST}
       API_HOST: ${API_HOST}
       OAUTH_HOST: ${OAUTH_HOST}
-      ACME_EMAIL: ${ACME_EMAIL}
+      # only these three are substituted; nginx's own $$variables are preserved
+      NGINX_ENVSUBST_FILTER: "^(APP|API|OAUTH)_HOST$$"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on: [ui, authsec, hydra]
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/tls.conf:/etc/nginx/snippets/tls.conf:ro
+      - ./nginx/upgrade-map.conf:/etc/nginx/conf.d/00-upgrade-map.conf:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    # The image's entrypoint is what renders /etc/nginx/templates through
+    # envsubst, and it only does that when its first argument is "nginx" -- so it
+    # is invoked explicitly here rather than replaced. The loop alongside reloads
+    # every 6h, which is how a renewed certificate gets picked up.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /docker-entrypoint.sh nginx -g 'daemon off;' &
+        nginx_pid=$$!
+        while :; do sleep 6h; nginx -s reload 2>/dev/null || true; done &
+        wait $$nginx_pid
+
+  # obtains the certificate once, then renews twice a day
+  certbot:
+    image: certbot/certbot:latest
+    <<: [*restart, *logging]
+    networks: [authsec]
+    depends_on:
+      nginx: { condition: service_started }
+    environment:
+      APP_HOST: ${APP_HOST}
+      API_HOST: ${API_HOST}
+      OAUTH_HOST: ${OAUTH_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+      ACME_ENV: ${ACME_ENV}
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+      - ./nginx/request-certs.sh:/request-certs.sh:ro
+    entrypoint: >
+      /bin/sh -c "sleep 10; /request-certs.sh || echo 'initial issuance failed -- see the guide';
+                  trap exit TERM;
+                  while :; do sleep 12h & wait $${!}; certbot renew --webroot -w /var/www/certbot; done"

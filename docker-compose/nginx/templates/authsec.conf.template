@@ -1,0 +1,87 @@
+# Rendered at container start: only APP_HOST / API_HOST / OAUTH_HOST are
+# substituted (NGINX_ENVSUBST_FILTER), so nginx's own $variables survive.
+
+# ---- shared proxy behaviour, matching the Kubernetes ingress annotations ----
+proxy_http_version 1.1;
+proxy_set_header Host              $host;
+proxy_set_header X-Real-IP         $remote_addr;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Upgrade           $http_upgrade;
+proxy_set_header Connection        $connection_upgrade;
+proxy_connect_timeout 60s;
+proxy_send_timeout    60s;
+proxy_read_timeout    60s;
+client_max_body_size  64m;
+
+# Docker's embedded DNS. Naming upstreams through a variable defers resolution
+# to request time -- without this, nginx resolves every proxy_pass at startup
+# and refuses to start if a single backend happens to be down, taking every
+# other route with it. With it, a missing backend is just a 502 on its own route.
+resolver 127.0.0.11 ipv6=off valid=10s;
+
+# ---- HTTP: ACME challenges, everything else redirected ----------------------
+server {
+    listen 80;
+    server_name ${APP_HOST} ${API_HOST} ${OAUTH_HOST};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---- web UI -----------------------------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${APP_HOST};
+    ssl_certificate     /etc/letsencrypt/live/authsec/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/authsec/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+
+    location / {
+        set $upstream http://ui:3000;
+        proxy_pass $upstream$request_uri;
+    }
+}
+
+# ---- API --------------------------------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${API_HOST};
+    ssl_certificate     /etc/letsencrypt/live/authsec/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/authsec/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+
+    location /logs/ {
+        set $upstream http://log-aggregator:7466;
+        proxy_pass $upstream$request_uri;
+    }
+    location / {
+        set $upstream http://authsec:4331;
+        proxy_pass $upstream$request_uri;
+    }
+}
+
+# ---- OAuth2 / OIDC public endpoints -----------------------------------------
+# Hydra's ADMIN API (4445) is deliberately not served here. It creates and
+# deletes OAuth clients with no authentication of its own and must stay on the
+# internal network:
+#   docker compose exec hydra hydra list clients --endpoint http://127.0.0.1:4445
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${OAUTH_HOST};
+    ssl_certificate     /etc/letsencrypt/live/authsec/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/authsec/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+
+    location / {
+        set $upstream http://hydra:4444;
+        proxy_pass $upstream$request_uri;
+    }
+}

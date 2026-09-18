@@ -36,6 +36,11 @@ if grep -q '^DB_PASSWORD=CHANGE_ME' .env; then
   echo "  set DB_PASSWORD (and its URL-encoded copy)"
 fi
 
+# docker compose looks for .env in its own directory; point it at the single
+# root file so `docker compose up -d` works without --env-file every time.
+ln -sfn ../.env docker-compose/.env
+echo "  linked docker-compose/.env -> ../.env"
+
 left=$(grep -c 'CHANGE_ME' .env || true)
 echo
 if [[ "$left" -eq 0 ]]; then
