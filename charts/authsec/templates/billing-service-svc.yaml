@@ -1,0 +1,15 @@
+{{- if .Values.billingservice.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-billing-service
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-billing-service
+  ports:
+    - protocol: TCP
+      port: {{ .Values.billingservice.port }}
+      targetPort: {{ .Values.billingservice.port }}
+  type: ClusterIP
+{{- end }}

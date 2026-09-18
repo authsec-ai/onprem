@@ -1,0 +1,15 @@
+{{- if .Values.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-ui
+  ports:
+    - protocol: TCP
+      port: {{ .Values.ui.port }}
+      targetPort: {{ .Values.ui.port }}
+  type: ClusterIP
+{{- end }}

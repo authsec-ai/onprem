@@ -1,0 +1,55 @@
+{{- if .Values.logaggregator.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-log-aggregator
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-log-aggregator
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-log-aggregator
+    spec:
+      containers:
+        - name: {{ .Release.Name }}-log-aggregator
+          image: {{ .Values.logaggregator.image.repository }}:{{ .Values.logaggregator.image.tag }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: PORT
+              value: {{.Values.logaggregator.port | quote}}
+            - name: FLUENT_BIT_URL
+              value: {{ .Values.logaggregator.env.fluentBitUrl | quote }}
+            - name: MINIO_ENDPOINT
+              value: "{{ .Release.Name }}-minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: MINIO_SECRET_KEY
+              value: {{ .Values.minio.rootPassword | quote }}
+            - name: MINIO_BUCKET
+              value: "logs"
+            - name: MINIO_USE_SSL
+              value: "false"
+            - name: CORS_ALLOW_ORIGIN
+              value: "*"
+            - name: LOG_LEVEL
+              value: {{.Values.logaggregator.env.logLevel | quote}}
+            - name: GIN_MODE
+              value: {{.Values.logaggregator.env.ginMode | quote}}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.logaggregator.port }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+      serviceAccountName: {{ .Release.Namespace }}-sa
+      {{- with .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}{{- end }}

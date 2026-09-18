@@ -1,0 +1,295 @@
+# =============================================================================
+#  AuthSec - single-host deployment with Docker Compose
+# =============================================================================
+#  Bring up:   docker compose up -d
+#
+#  Values come from the single .env in the repository root; the .env symlink in
+#  this directory points at it, so plain `docker compose` picks it up.
+#  See:        ../DEPLOY-DOCKER-COMPOSE.md
+#
+#  Only Caddy publishes ports. Everything else talks over the internal
+#  "authsec" network, so the database, Vault, MinIO and the Hydra admin API are
+#  never reachable from outside the host.
+# =============================================================================
+
+name: authsec
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+networks:
+  authsec:
+    name: authsec
+
+volumes:
+  postgres-data:
+  vault-data:
+  vault-file:
+  minio-data:
+  caddy-data:
+  caddy-config:
+
+services:
+
+  # ------------------------------------------------------------ PostgreSQL --
+  postgres:
+    image: postgres:16-alpine
+    <<: [*restart, *logging]
+    networks: [authsec]
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      HYDRA_DB_NAME: ${HYDRA_DB_NAME}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # runs once, on an empty data directory only
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ----------------------------------------------------------------- Vault --
+  # File storage, sealed on start. ./vault-init.sh initialises and unseals it,
+  # and prints the token to put in .env as VAULT_TOKEN.
+  vault:
+    image: hashicorp/vault:1.19
+    <<: [*restart, *logging]
+    networks: [authsec]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_API_ADDR: http://vault:8200
+    volumes:
+      - vault-data:/vault/data
+      - vault-file:/vault/file
+    command:
+      - sh
+      - -c
+      - |
+        cat > /tmp/vault.hcl <<'EOF'
+        ui = true
+        disable_mlock = true
+        listener "tcp" {
+          address     = "0.0.0.0:8200"
+          tls_disable = 1
+        }
+        storage "file" { path = "/vault/data" }
+        max_lease_ttl     = "8760h"
+        default_lease_ttl = "8760h"
+        EOF
+        exec vault server -config=/tmp/vault.hcl
+    healthcheck:
+      # 501 = sealed, 200 = unsealed; both mean the process is answering
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8200/v1/sys/health || true"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ----------------------------------------------------------------- MinIO --
+  minio:
+    image: quay.io/minio/minio:latest
+    <<: [*restart, *logging]
+    networks: [authsec]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # creates the "logs" bucket, then exits
+  minio-init:
+    image: quay.io/minio/mc:latest
+    networks: [authsec]
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing local/logs
+        echo "bucket 'logs' ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: "no"
+
+  # ------------------------------------------------------------ Fluent Bit --
+  fluent-bit:
+    image: fluent/fluent-bit:3.1.9
+    <<: [*restart, *logging]
+    networks: [authsec]
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+
+  # ------------------------------------------------------- Ory Hydra (OIDC) --
+  # Runs the SQL migration once, then exits. Hydra waits for it to succeed.
+  hydra-migrate:
+    image: oryd/hydra:v2.3.0
+    networks: [authsec]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DSN: postgres://${DB_USER}:${DB_PASSWORD_URLENCODED}@postgres:5432/${HYDRA_DB_NAME}?sslmode=disable
+    command: migrate sql -e --yes
+    restart: "no"
+
+  hydra:
+    image: oryd/hydra:v2.3.0
+    <<: [*restart, *logging]
+    networks: [authsec]
+    depends_on:
+      hydra-migrate: { condition: service_completed_successfully }
+    environment:
+      DSN: postgres://${DB_USER}:${DB_PASSWORD_URLENCODED}@postgres:5432/${HYDRA_DB_NAME}?sslmode=disable
+      SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM}
+      SECRETS_COOKIE: ${HYDRA_SECRETS_COOKIE}
+      URLS_SELF_ISSUER: https://${OAUTH_HOST}
+      URLS_SELF_PUBLIC: https://${OAUTH_HOST}
+      URLS_LOGIN: https://${API_HOST}/hmgr/login
+      URLS_CONSENT: https://${API_HOST}/hmgr/consent
+      URLS_LOGOUT: https://${API_HOST}/hmgr/logout
+      URLS_ERROR: https://${API_HOST}/hmgr/error
+      URLS_POST_LOGOUT_REDIRECT: https://${API_HOST}/hmgr/
+      SERVE_PUBLIC_PORT: "4444"
+      SERVE_ADMIN_PORT: "4445"
+      SERVE_COOKIES_SAME_SITE_MODE: Lax
+      SERVE_COOKIES_SECURE: "true"
+      STRATEGIES_ACCESS_TOKEN: jwt
+      TTL_ACCESS_TOKEN: 1h
+      TTL_REFRESH_TOKEN: 720h
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+    command: serve all --dev=false
+
+  # ----------------------------------------------------------- AuthSec API --
+  authsec:
+    image: ${REGISTRY}/authsec:${IMAGE_TAG}
+    <<: [*restart, *logging]
+    networks: [authsec]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PORT: "4331"
+      GIN_MODE: release
+      LOG_LEVEL: info
+      ENVIRONMENT: production
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SCHEMA: public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_DEF_SECRET: ${JWT_DEF_SECRET}
+      JWT_SDK_SECRET: ${JWT_SDK_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      AUTHSEC_OIDC_STATE_HMAC_KEY: ${OIDC_STATE_HMAC_KEY}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+      SYNC_CONFIG_ENCRYPTION_KEY: ${SYNC_CONFIG_ENCRYPTION_KEY}
+      WEBAUTHN_RP_NAME: ${DOMAIN}
+      WEBAUTHN_RP_ID: ${APP_HOST}
+      WEBAUTHN_ORIGIN: https://${APP_HOST}
+      WEBAUTHN_TIMEOUT: "60000"
+      WEBAUTHN_DEBUG: "false"
+      HYDRA_ADMIN_URL: http://hydra:4445
+      HYDRA_PUBLIC_URL: https://${OAUTH_HOST}
+      HYDRA_SERVICE_URL: http://hydra:4444
+      BASE_URL: https://${APP_HOST}
+      PUBLIC_UI_ORIGIN: https://${APP_HOST}
+      CORS_ALLOWED_ORIGINS: https://${APP_HOST}
+      CORS_ALLOW_ORIGIN: https://${APP_HOST}
+      CORS_ALLOWED_METHODS: "GET, POST, PUT, DELETE, OPTIONS"
+      CORS_ALLOWED_HEADERS: "Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control"
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      AGGREGATOR_URL: http://log-aggregator:7466
+
+  # ------------------------------------------------------------------- UI --
+  ui:
+    image: ${REGISTRY}/ui:${IMAGE_TAG}
+    <<: [*restart, *logging]
+    networks: [authsec]
+    environment:
+      VITE_API_URL: https://${API_HOST}
+
+  # -------------------------------------------------------- Log aggregator --
+  log-aggregator:
+    image: ${REGISTRY}/log-aggregator:${IMAGE_TAG}
+    <<: [*restart, *logging]
+    networks: [authsec]
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      PORT: "7466"
+      FLUENT_BIT_URL: http://fluent-bit:2020
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: logs
+      MINIO_USE_SSL: "false"
+      CORS_ALLOW_ORIGIN: https://${APP_HOST}
+      LOG_LEVEL: info
+      GIN_MODE: release
+
+  # -------------------------------------------------------- SPIRE headless --
+  spire-headless:
+    image: ${REGISTRY}/spire-headless:${IMAGE_TAG}
+    <<: [*restart, *logging]
+    networks: [authsec]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PORT: "7475"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SCHEMA: public
+      DB_SSL_MODE: disable
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD_URLENCODED}@postgres:5432/${DB_NAME}?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LOG_LEVEL: info
+      GIN_MODE: release
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN}
+      JWT_DEF_SECRET: ${JWT_DEF_SECRET}
+      JWT_SDK_SECRET: ${JWT_SDK_SECRET}
+
+  # --------------------------------------------- Caddy: TLS + the only ports --
+  caddy:
+    image: caddy:2
+    <<: [*restart, *logging]
+    networks: [authsec]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_HOST: ${APP_HOST}
+      API_HOST: ${API_HOST}
+      OAUTH_HOST: ${OAUTH_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [ui, authsec, hydra]

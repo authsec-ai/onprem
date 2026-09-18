@@ -1,0 +1,190 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: authsec-ingress
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | quote }}
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '60'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '60'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '60'
+spec:
+  ingressClassName: {{ .Values.global.ingressClassName }}
+  tls:
+    - hosts:
+        - {{ .Values.global.hosts.api }}
+      secretName: {{ .Release.Name }}-api-tls
+    - hosts:
+        - {{ .Values.global.hosts.app }}
+      secretName: {{ .Release.Name }}-app-tls
+    - hosts:
+        - {{ printf "*.%s" .Values.global.hosts.app | quote }}
+      secretName: {{ .Release.Name }}-wildcard-tls
+  rules:
+    - host: {{ .Values.global.hosts.api }}
+      http:
+        paths:
+          {{- if and .Values.authmanager .Values.authmanager.enabled }}
+          - pathType: Prefix
+            path: /authmgr/
+            backend:
+              service:
+                name: {{ .Release.Name }}-auth-manager
+                port:
+                  number: {{ .Values.authmanager.port }}
+          {{- end }}
+          {{- if and .Values.hydramanager .Values.hydramanager.enabled }}
+          - pathType: Prefix
+            path: /hmgr/
+            backend:
+              service:
+                name: {{ .Release.Name }}-hydra-manager
+                port:
+                  number: {{ .Values.hydramanager.port }}
+          {{- end }}
+          {{- if and .Values.oocmanager .Values.oocmanager.enabled }}
+          - pathType: Prefix
+            path: /oocmgr/
+            backend:
+              service:
+                name: {{ .Release.Name }}-ooc-manager
+                port:
+                  number: {{ .Values.oocmanager.port }}
+          {{- end }}
+          {{- if and .Values.userflow .Values.userflow.enabled }}
+          - pathType: Prefix
+            path: /uflow/
+            backend:
+              service:
+                name: {{ .Release.Name }}-user-flow
+                port:
+                  number: {{ .Values.userflow.port }}
+          {{- end }}
+          {{- if and .Values.webauthnservice .Values.webauthnservice.enabled }}
+          - pathType: Prefix
+            path: /webauthn/
+            backend:
+              service:
+                name: {{ .Release.Name }}-webauthn-service
+                port:
+                  number: {{ .Values.webauthnservice.port }}
+          {{- end }}
+          {{- if and .Values.externalservice .Values.externalservice.enabled }}
+          - pathType: Prefix
+            path: /exsvc/
+            backend:
+              service:
+                name: {{ .Release.Name }}-external-service
+                port:
+                  number: {{ .Values.externalservice.port }}
+          {{- end }}
+          {{- if and .Values.clientsmicroservice .Values.clientsmicroservice.enabled }}
+          - pathType: Prefix
+            path: /clientms/
+            backend:
+              service:
+                name: {{ .Release.Name }}-clients-microservice
+                port:
+                  number: {{ .Values.clientsmicroservice.port }}
+          {{- end }}
+          {{- if and .Values.sdkmanager .Values.sdkmanager.enabled }}
+          - pathType: Prefix
+            path: /sdkmgr/
+            backend:
+              service:
+                name: {{ .Release.Name }}-sdk-manager
+                port:
+                  number: {{ .Values.sdkmanager.port }}
+          {{- end }}
+          {{- if .Values.spireheadless.enabled }}
+          - pathType: Prefix
+            path: /spiresvc/
+            backend:
+              service:
+                name: {{ .Release.Name }}-spire-headless
+                port:
+                  number: {{ .Values.spireheadless.port }}
+          {{- end }}
+          {{- if .Values.logaggregator.enabled }}
+          - pathType: Prefix
+            path: /logs/
+            backend:
+              service:
+                name: {{ .Release.Name }}-log-aggregator
+                port:
+                  number: {{ .Values.logaggregator.port }}
+          {{- end }}
+          {{- if and .Values.aicopilot .Values.aicopilot.enabled }}
+          - pathType: Prefix
+            path: /aipilot/
+            backend:
+              service:
+                name: {{ .Release.Name }}-ai-service
+                port:
+                  number: {{ .Values.aicopilot.port }}
+          {{- end }}
+          {{- if .Values.authsec.enabled }}
+          - pathType: Prefix
+            path: /oauth/
+            backend:
+              service:
+                name: {{ .Release.Name }}-authsec
+                port:
+                  number: {{ .Values.authsec.port }}
+          - pathType: Prefix
+            path: /.well-known/
+            backend:
+              service:
+                name: {{ .Release.Name }}-authsec
+                port:
+                  number: {{ .Values.authsec.port }}
+          - pathType: Prefix
+            path: /authsec/
+            backend:
+              service:
+                name: {{ .Release.Name }}-authsec
+                port:
+                  number: {{ .Values.authsec.port }}
+          - pathType: Prefix
+            path: /api/
+            backend:
+              service:
+                name: {{ .Release.Name }}-authsec
+                port:
+                  number: {{ .Values.authsec.port }}
+          {{- end }}
+          {{- if .Values.billingservice.enabled }}
+          - pathType: Prefix
+            path: /api/v1/billing/
+            backend:
+              service:
+                name: {{ .Release.Name }}-billing-service
+                port:
+                  number: {{ .Values.billingservice.port }}
+          {{- end }}
+
+    - host: {{ .Values.global.hosts.app }}
+      http:
+        paths:
+          {{- if .Values.ui.enabled }}
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: {{ .Release.Name }}-ui
+                port:
+                  number: {{ .Values.ui.port }}
+          {{- end }}
+    - host: {{ printf "*.%s" .Values.global.hosts.app | quote }}
+      http:
+        paths:
+          {{- if .Values.ui.enabled }}
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: {{ .Release.Name }}-ui
+                port:
+                  number: {{ .Values.ui.port }}
+          {{- end }}

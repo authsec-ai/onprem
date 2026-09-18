@@ -1,0 +1,54 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hydra-ingress
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | quote }}
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Origin, X-Requested-With, Content-Type, Accept, Content-Length, Accept-Encoding, X-CSRF-Token, accept, Cache-Control, X-Authorization, withCredentials, X-Requesturl,X-User-Ip, Userid, email"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PATCH, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '60'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '60'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '60'
+spec:
+  ingressClassName: {{ .Values.global.ingressClassName }}
+  tls:
+    - hosts:
+        - {{ .Values.global.hosts.oauth }}
+      secretName: {{ .Release.Name }}-tls
+{{- if .Values.global.hosts.oauthAdmin }}
+    - hosts:
+        - {{ .Values.global.hosts.oauthAdmin }}
+      secretName: {{ .Release.Name }}-admin-tls
+{{- end }}
+
+  rules:
+    - host: {{ .Values.global.hosts.oauth }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: hydra-public
+                port:
+                  number: 4444
+{{- if .Values.global.hosts.oauthAdmin }}
+    # Hydra's admin API creates and deletes OAuth clients with no authentication
+    # of its own. It is published only when OAUTH_ADMIN_HOST is set, and should
+    # sit behind an authenticating proxy or IP allow-list when it is.
+    - host: {{ .Values.global.hosts.oauthAdmin }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: hydra-admin
+                port:
+                  number: 4445
+{{- end }}

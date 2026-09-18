@@ -1,0 +1,203 @@
+# Namespace for Fluent Bit
+nameOverride: "fluent-bit"
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""  # Set platform-specific if needed
+
+# Image settings
+image:
+  registry: docker.io
+  repository: bitnamilegacy/fluent-bit
+  tag: 3.1.9-debian-12-r0
+  pullPolicy: IfNotPresent
+
+# DaemonSet settings
+daemonset:
+  enabled: true
+  podSecurityContext:
+    enabled: true
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
+  hostPaths:
+    logs: /var/log
+    containerLogs: /var/lib/docker/containers
+    machineId: /etc/machine-id
+
+# Service settings
+service:
+  type: ClusterIP
+  ports:
+    http:
+      port: 2020
+      protocol: TCP
+    httpInput:
+      port: 8888
+      protocol: TCP
+
+# Ingress for metrics (optional)
+ingress:
+  enabled: true
+  ingressClassName: "nginx"
+  hostname: fluent-bit.example.com
+  path: /
+  pathType: Prefix
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  tls: true
+  # selfSigned/secrets are for supplying your own certificate material inline.
+  # cert-manager issues this one (see the cluster-issuer annotation above), so
+  # both stay empty: the chart emits an Ingress with a tls block, and
+  # cert-manager's ingress-shim creates the secret it names.
+  selfSigned: false
+  secrets: []
+
+# Probes
+livenessProbe:
+  enabled: true  # Enabled in original
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 1
+  failureThreshold: 3
+  successThreshold: 1
+startupProbe:
+  enabled: true  # Enabled in original
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 1
+  failureThreshold: 15
+  successThreshold: 1
+readinessProbe:
+  enabled: true  # Enabled in original
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 1
+  failureThreshold: 15
+  successThreshold: 1
+
+# Resources
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Security contexts
+podSecurityContext:
+  enabled: true  # Enabled in original
+  fsGroupChangePolicy: Always
+  fsGroup: 1001
+containerSecurityContext:
+  enabled: true  # Enabled in original
+  runAsUser: 1001
+  runAsGroup: 1001
+  runAsNonRoot: true
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: "RuntimeDefault"
+
+# Service account
+serviceAccount:
+  create: true  # Enabled in original
+  automountServiceAccountToken: false
+
+# Network policy
+networkPolicy:
+  enabled: true  # Enabled in original
+  allowExternal: true
+  allowExternalEgress: true
+
+# Pod disruption budget
+pdb:
+  create: true  # Enabled in original
+  maxUnavailable: "50%"
+
+# Metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs (monitoring.coreos.com/v1), which
+    # are not installed in this cluster -- helm would fail with
+    # 'no matches for kind "ServiceMonitor"'. The prometheus.io/* annotations
+    # below still let a plain Prometheus scrape the metrics endpoint.
+    enabled: false
+    interval: 15s
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "2020"
+      prometheus.io/path: "/metrics"
+
+# Node selector and tolerations
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+
+# Reference external ConfigMap
+existingConfigMap: ""
+
+containerPorts:
+  http: 2020
+  httpInput: 8888
+
+# autoscaling hpa
+autoscaling:
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+#pod affinity
+podAffinityPreset: ""
+podAntiAffinityPreset: "soft"
+
+nodeAffinityPreset:
+  type: ""
+  key: ""
+  values: []
+
+diagnosticMode:
+  enabled: false
+
+rbac:
+  create: true
+
+# values.yaml
+config:
+  flush: 1
+  logLevel: info
+
+  inputs:
+    - name: http
+      options:
+        Listen: 0.0.0.0
+        Port: 8888
+        Tag: auth.logs
+
+  filters:
+    - name: rewrite_tag
+      options:
+        Match: auth.logs
+        Rule: 'tenant_id ^(.+)$ tenant.$1 false'
+        Emitter_Name: re_emitted
+
+  outputs:
+    # DEFAULT: Debug logs to stdout
+    - name: stdout
+      options:
+        Match: "*"
+        Format: json_lines

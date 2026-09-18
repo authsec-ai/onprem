@@ -1,0 +1,11 @@
+# Live configuration — never commit
+.env
+docker-compose/.env
+vault-keys.txt
+vault-init-raw.json
+vault-keys-BACKUP.yaml
+
+# Rendered from .env at deploy time
+.generated/
+
+*.bak

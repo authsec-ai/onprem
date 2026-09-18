@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hydra-migrate-job
+  namespace: {{ .Release.namespace }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: hydra-migrate
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["hydra", "migrate", "sql", "-c", "/etc/hydra/hydra.yml", "-e", "--yes"]
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/hydra
+          envFrom:
+            - secretRef:
+                name: hydra-secrets
+      volumes:
+        - name: config-volume
+          configMap:
+            name: hydra-config
+      restartPolicy: Never
+  backoffLimit: {{ .Values.migration.backoffLimit }}

@@ -1,0 +1,99 @@
+{{- if .Values.spireworkloadb.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-spire-workload-b
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-spire-workload-b
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-spire-workload-b
+    spec:
+      {{- if .Values.spireworkloadb.env.node_selector }}
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.spireworkloadb.env.node_selector }}
+      {{- end }}
+      containers:
+        - name: {{ .Release.Name }}-spire-workload-b
+          image: {{ .Values.spireworkloadb.image.repository }}:{{ .Values.spireworkloadb.image.tag }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            # SPIFFE Configuration
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: {{.Values.spireworkloadb.env.spiffe_endpoint_socket | quote}}
+
+            # Kubernetes Downward API for workload attestation
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: POD_LABEL_APP
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app']
+
+            - name: AZURE_OPENAI_API_KEY
+              value: {{.Values.spireworkloadb.env.azure_openai_api_key | quote}}
+            - name: AZURE_OPENAI_ENDPOINT
+              value: {{.Values.spireworkloadb.env.azure_openai_endpoint | quote}}
+            - name: AZURE_OPENAI_VERSION
+              value: {{.Values.spireworkloadb.env.azure_openai_version | quote}}
+            - name: AZURE_OPENAI_DEPLOYMENT_NAME
+              value: {{.Values.spireworkloadb.env.azure_openai_deployment_name | quote}}
+
+            - name: PORT
+              value: {{.Values.spireworkloadb.port | quote}}
+            - name: DB_HOST
+              value: {{.Values.postgresDb.dbHost | quote}}
+            - name: DB_PORT
+              value: {{.Values.postgresDb.dbPort | quote}}
+            - name: DB_USER
+              value: {{.Values.postgresDb.dbUser | quote}}
+            - name: DB_PASSWORD
+              value: {{.Values.postgresDb.dbPassword | quote}}
+            - name: DB_NAME
+              value: {{.Values.postgresDb.dbName | quote}}
+            - name: DB_SCHEMA
+              value: {{.Values.postgresDb.dbSchema | quote}}
+
+            - name: LOG_LEVEL
+              value: "info"
+
+          volumeMounts:
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.spireworkloadb.port }}
+
+      volumes:
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: Directory
+
+      serviceAccountName: {{ .Release.Namespace }}-sa
+      {{- with .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}{{- end }}

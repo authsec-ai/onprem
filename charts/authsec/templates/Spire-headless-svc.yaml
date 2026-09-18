@@ -1,0 +1,14 @@
+{{- if .Values.spireheadless.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-spire-headless
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-spire-headless
+  ports:
+    - protocol: TCP
+      port: {{ .Values.spireheadless.port }}
+      targetPort: {{ .Values.spireheadless.port }}
+  type: ClusterIP{{- end }}

@@ -1,0 +1,236 @@
+{{- if .Values.authsec.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-authsec
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-authsec
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/authsec/metrics"
+        prometheus.io/port: {{ .Values.authsec.port | quote }}
+      labels:
+        app: {{ .Release.Name }}-authsec
+    spec:
+      containers:
+        - name: {{ .Release.Name }}-authsec
+          image: {{ .Values.authsec.image.repository }}:{{ .Values.authsec.image.tag }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          env:
+            # ── Server ──────────────────────────────────────────────────────
+            - name: PORT
+              value: {{ .Values.authsec.port | quote }}
+            - name: GIN_MODE
+              value: {{ .Values.authsec.env.ginMode | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.authsec.env.logLevel | quote }}
+            - name: ENVIRONMENT
+              value: {{ .Values.authsec.env.environment | quote }}
+
+            # ── Primary PostgreSQL database ──────────────────────────────────
+            - name: DB_HOST
+              value: {{ .Values.postgresDb.dbHost | quote }}
+            - name: DB_PORT
+              value: {{ .Values.postgresDb.dbPort | quote }}
+            - name: DB_USER
+              value: {{ .Values.postgresDb.dbUser | quote }}
+            - name: DB_PASSWORD
+              value: {{ .Values.postgresDb.dbPassword | quote }}
+            - name: DB_NAME
+              value: {{ .Values.postgresDb.dbName | quote }}
+            - name: DB_SCHEMA
+              value: {{ .Values.postgresDb.dbSchema | quote }}
+
+            # ── JWT / Token secrets ──────────────────────────────────────────
+            - name: JWT_SECRET
+              value: {{ .Values.authsec.env.jwtSecret | quote }}
+            - name: JWT_DEF_SECRET
+              value: {{ .Values.authsec.env.jwtDefSecret | quote }}
+            - name: JWT_SDK_SECRET
+              value: {{ .Values.authsec.env.jwtSdkSecret | quote }}
+            - name: AUTHSEC_OIDC_STATE_HMAC_KEY
+              value: {{ .Values.authsec.env.authsecOidcStateHmacKey | quote }}
+
+            # ── WebAuthn (FIDO2 Passkeys) ────────────────────────────────────
+            - name: WEBAUTHN_RP_NAME
+              value: {{ .Values.authsec.env.webauthnRpName | quote }}
+            - name: WEBAUTHN_RP_ID
+              value: {{ .Values.authsec.env.webauthnRpId | quote }}
+            - name: WEBAUTHN_ORIGIN
+              value: {{ .Values.authsec.env.webauthnOrigin | quote }}
+            - name: WEBAUTHN_TIMEOUT
+              value: {{ .Values.authsec.env.webauthnTimeout | quote }}
+            - name: WEBAUTHN_DEBUG
+              value: {{ .Values.authsec.env.webauthnDebug | quote }}
+
+            # ── TOTP ─────────────────────────────────────────────────────────
+            - name: TOTP_ENCRYPTION_KEY
+              value: {{ .Values.authsec.env.totpEncryptionKey | quote }}
+            - name: SYNC_CONFIG_ENCRYPTION_KEY
+              value: {{ .Values.authsec.env.syncConfigEncryptionKey | quote }}
+
+            # ── Twilio (SMS MFA) ─────────────────────────────────────────────
+            - name: TWILIO_ACCOUNT_SID
+              value: {{ .Values.authsec.env.twilioAccountSid | quote }}
+            - name: TWILIO_AUTH_TOKEN
+              value: {{ .Values.authsec.env.twilioAuthToken | quote }}
+            - name: TWILIO_FROM_NUMBER
+              value: {{ .Values.authsec.env.twilioFromNumber | quote }}
+
+            # ── SMTP ─────────────────────────────────────────────────────────
+            - name: SMTP_HOST
+              value: {{ .Values.smtp.smtpHost | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtp.smtpPort | quote }}
+            - name: SMTP_USER
+              value: {{ .Values.smtp.smtpUser | quote }}
+            - name: SMTP_PASSWORD
+              value: {{ .Values.smtp.smtpPassword | quote }}
+
+            # ── CORS ─────────────────────────────────────────────────────────
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ .Values.authsec.env.corsAllowedOrigin | quote }}
+            - name: CORS_ALLOWED_METHODS
+              value: {{ .Values.authsec.env.corsAllowedMethods | quote }}
+            - name: CORS_ALLOWED_HEADERS
+              value: {{ .Values.authsec.env.corsAllowedHeaders | quote }}
+            - name: CORS_ALLOW_ORIGIN
+              value: {{ .Values.authsec.env.corsAllowOrigin | quote }}
+
+            # ── External service URLs ────────────────────────────────────────
+            - name: HYDRA_ADMIN_URL
+              value: {{ .Values.authsec.env.hydraAdminUrl | quote }}
+            - name: HYDRA_PUBLIC_URL
+              value: {{ .Values.authsec.env.hydraPublicUrl | quote }}
+            - name: HYDRA_SERVICE_URL
+              value: "http://localhost:{{ .Values.authsec.port }}/authsec"
+            - name: ICP_SERVICE_URL
+              value: http://{{ .Release.Name }}-spire-headless.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.spireheadless.port }}
+            - name: BASE_URL
+              value: {{ .Values.authsec.env.baseUrl | quote }}
+
+            # ── Tenant routing ───────────────────────────────────────────────
+            - name: TENANT_DOMAIN_SUFFIX
+              value: {{ .Values.authsec.env.tenantDomainSuffix | quote }}
+
+            # ── Redis ────────────────────────────────────────────────────────
+            - name: REDIS_URL
+              value: {{ .Values.authsec.env.redisUrl | quote }}
+
+            # ── HashiCorp Vault ──────────────────────────────────────────────
+            - name: VAULT_ADDR
+              value: {{ .Values.authsec.env.vaultAddr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-credentials
+                  key: long-lived-token
+
+            # ── OIDC provider credentials ────────────────────────────────────
+            - name: GOOGLE_CLIENT_SECRET
+              value: {{ .Values.authsec.env.googleClientSecret | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              value: {{ .Values.authsec.env.githubClientSecret | quote }}
+            - name: MICROSOFT_CLIENT_SECRET
+              value: {{ .Values.authsec.env.microsoftClientSecret | quote }}
+
+            # ── HubSpot ──────────────────────────────────────────────────────
+            - name: HUBSPOT_ACCESS_TOKEN
+              value: {{ .Values.authsec.env.hubspotAccessToken | quote }}
+
+            # ── Hydra Manager ────────────────────────────────────────────────
+            - name: PUBLIC_UI_ORIGIN
+              value: {{ .Values.authsec.env.publicUiOrigin | quote }}
+            - name: PUBLIC_UI_BASE_PATH
+              value: {{ .Values.authsec.env.publicUiBasePath | quote }}
+            - name: SESSION_SECRET
+              value: {{ .Values.authsec.env.sessionSecret | quote }}
+
+            # ── OIDC token validation ────────────────────────────────────────
+            - name: AUTH_EXPECT_ISS
+              value: {{ .Values.authsec.env.authExpectIss | quote }}
+            - name: AUTH_EXPECT_AUD
+              value: {{ .Values.authsec.env.authExpectAud | quote }}
+
+            # ── Server authentication gate ───────────────────────────────────
+            - name: REQUIRE_SERVER_AUTH
+              value: {{ .Values.authsec.env.requireServerAuth | quote }}
+
+            # ── SDK Manager OAuth ──────────────────────────────────────────────
+            - name: OAUTH_AUTH_URL
+              value: {{ .Values.authsec.env.oauthAuthUrl | quote }}
+            - name: OAUTH_TOKEN_URL
+              value: {{ .Values.authsec.env.oauthTokenUrl | quote }}
+            - name: OAUTH_USERINFO_URL
+              value: {{ .Values.authsec.env.oauthUserInfoUrl | quote }}
+            - name: OAUTH_REDIRECT_URI
+              value: {{ .Values.authsec.env.oauthRedirectUri | quote }}
+            - name: AUTHSEC_REDIRECT_SOURCE
+              value: {{ .Values.authsec.env.authsecRedirectSource | quote }}
+
+            # ── SPIFFE / SVID OIDC ───────────────────────────────────────────
+            - name: SPIFFE_OIDC_ISSUER
+              value: {{ .Values.authsec.env.spiffeOidcIssuer | quote }}
+            - name: SPIFFE_JWKS_KEY_ID
+              value: {{ .Values.authsec.env.spiffeJwksKeyId | quote }}
+            - name: SPIFFE_RSA_PRIVATE_KEY_B64
+              value: {{ .Values.authsec.env.spiffeRsaPrivateKeyB64 | quote }}
+            - name: SPIFFE_TRUST_DOMAIN
+              value: {{ .Values.authsec.env.spiffeTrustDomain | quote }}
+
+            # ── Okta CIBA ────────────────────────────────────────────────────
+            - name: OKTA_DOMAIN
+              value: {{ .Values.authsec.env.oktaDomain | quote }}
+            - name: OKTA_CLIENT_ID
+              value: {{ .Values.authsec.env.oktaClientId | quote }}
+            - name: OKTA_CLIENT_SECRET
+              value: {{ .Values.authsec.env.oktaClientSecret | quote }}
+            - name: OKTA_ISSUER
+              value: {{ .Values.authsec.env.oktaIssuer | quote }}
+            - name: OKTA_API_TOKEN
+              value: {{ .Values.authsec.env.oktaApiToken | quote }}
+
+
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.authsec.port }}
+        - name: {{ .Release.Name }}-log-agent
+          image: {{ .Values.logagent.image.repository }}:{{ .Values.logagent.image.tag }}
+          imagePullPolicy: Always
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MAIN_CONTAINER_NAME
+              value: "{{ .Release.Name }}-authsec"
+            - name: AGGREGATOR_URL
+              value: http://{{ .Release.Name }}-log-aggregator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.logaggregator.port }}/logs/push
+            - name: SEND_INTERVAL
+              value: {{ .Values.logagent.env.sendInterval | quote }}
+            - name: MAX_BATCH_SIZE
+              value: {{ .Values.logagent.env.maxBatchSize | quote }}
+      serviceAccountName: {{ .Release.Namespace }}-sa
+      {{- with .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+{{- end }}

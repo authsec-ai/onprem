@@ -1,0 +1,105 @@
+{{- if .Values.spireheadless.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-spire-headless
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-spire-headless
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-spire-headless
+        spiffe-id: spiffe-service
+    spec:
+      serviceAccountName: {{ .Release.Namespace }}-sa
+      containers:
+        - name: {{ .Release.Name }}-spire-headless
+          image: {{ .Values.spireheadless.image.repository }}:{{ .Values.spireheadless.image.tag }}
+          ports:
+            - containerPort: {{ .Values.spireheadless.port }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: DB_HOST
+              value: {{ .Values.postgresDb.dbHost | quote }}
+            - name: DB_PORT
+              value: {{ .Values.postgresDb.dbPort | quote }}
+            - name: DB_USER
+              value: {{ .Values.postgresDb.dbUser | quote }}
+            - name: DB_PASSWORD
+              value: {{ .Values.postgresDb.dbPassword | quote }}
+            - name: DB_NAME
+              value: {{ .Values.postgresDb.dbName | quote }}
+            - name: DB_SCHEMA
+              value: {{ .Values.postgresDb.dbSchema | quote }}
+            - name: PORT
+              value: {{ .Values.spireheadless.port | quote }}
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresDb.dbUser }}:{{ .Values.postgresDb.dbPassword | urlquery }}@{{ .Values.postgresDb.dbHost }}:{{ .Values.postgresDb.dbPort }}/{{ .Values.postgresDb.dbName }}?sslmode=disable"
+            - name: DB_SSL_MODE
+              value: "disable"
+            - name: ENCRYPTION_KEY
+              value: {{ .Values.encryption.key | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.spireheadless.env.log_level | quote }}
+            - name: GIN_MODE
+              value: {{ .Values.spireheadless.env.gin_mode | quote }}
+            - name: VAULT_ADDR
+              value: {{ .Values.spireheadless.env.vault_addr | quote }}
+            - name: VAULT_NAMESPACE
+              value: {{ .Values.spireheadless.env.vault_namespace | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-credentials
+                  key: long-lived-token
+            - name: JWT_DEF_SECRET
+              value: {{ .Values.spireheadless.env.jwt_def_secret | quote }}
+            - name: JWT_SDK_SECRET
+              value: {{ .Values.spireheadless.env.jwt_sdk_secret | quote }}
+            
+          imagePullPolicy: Always
+        - name: {{ .Release.Name }}-log-agent
+          image: {{ .Values.logagent.image.repository }}:{{ .Values.logagent.image.tag }}
+          imagePullPolicy: Always
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MAIN_CONTAINER_NAME
+              value: "{{ .Release.Name }}-spire-headless"
+            - name: AGGREGATOR_URL
+              value: http://{{ .Release.Name }}-log-aggregator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.logaggregator.port }}/logs/push
+            - name: SEND_INTERVAL
+              value: {{ .Values.logagent.env.sendInterval | quote }}
+            - name: MAX_BATCH_SIZE
+              value: {{ .Values.logagent.env.maxBatchSize | quote }}
+      volumes:
+      - name: spire-server-socket      
+        hostPath:
+          path: /tmp/spire-server/private
+          type: DirectoryOrCreate
+      - name: spire-agent-socket        
+        hostPath:
+          path: /run/spire/sockets
+          type: DirectoryOrCreate
+      {{- with .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}{{- end }}

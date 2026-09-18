@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hydra
+  namespace: {{ .Release.namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: hydra
+  template:
+    metadata:
+      labels:
+        app: hydra
+    spec:
+      containers:
+        - name: hydra
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 4444
+              name: public
+            - containerPort: 4445
+              name: admin
+          command: ["hydra", "serve", "all", "--config", "/etc/hydra/hydra.yml"]
+          envFrom:
+            - secretRef:
+                name: hydra-secrets
+          env:
+            - name: URLS_SELF_ISSUER
+              value: {{ .Values.hydra.urls.selfIssuer | quote }}
+            - name: URLS_SELF_PUBLIC
+              value: {{ .Values.hydra.urls.selfPublic | quote }}
+            - name: URLS_CONSENT
+              value: {{ .Values.hydra.urls.consent | quote }}
+            - name: URLS_LOGIN
+              value: {{ .Values.hydra.urls.login | quote }}
+            - name: URLS_LOGOUT
+              value: {{ .Values.hydra.urls.logout | quote }}
+            - name: URLS_REGISTRATION
+              value: {{ .Values.hydra.urls.registration | quote }}
+            - name: URLS_ERROR
+              value: {{ .Values.hydra.urls.error | quote }}
+            - name: URLS_POST_LOGOUT_REDIRECT
+              value: {{ .Values.hydra.urls.postLogoutRedirect | quote }}
+            - name: OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES
+              value: {{ .Values.hydra.oidc.subjectIdentifiersSupportedTypes | quote }}
+            - name: SERVE_PUBLIC_CORS_ENABLED
+              value: {{ .Values.hydra.cors.enabled | quote }}
+            - name: SERVE_PUBLIC_CORS_ALLOWED_ORIGINS
+              value: {{ .Values.hydra.cors.allowedOrigins | quote }}
+            - name: SERVE_PUBLIC_CORS_ALLOWED_METHODS
+              value: {{ .Values.hydra.cors.allowedMethods | quote }}
+            - name: SERVE_PUBLIC_CORS_ALLOWED_HEADERS
+              value: {{ .Values.hydra.cors.allowedHeaders | quote }}
+            - name: SERVE_PUBLIC_CORS_ALLOW_CREDENTIALS
+              value: {{ .Values.hydra.cors.allowCredentials | quote }}
+            - name: SERVE_PUBLIC_CORS_MAX_AGE
+              value: {{ .Values.hydra.cors.maxAge | quote }}
+            - name: SERVE_COOKIES_SAME_SITE_MODE
+              value: {{ .Values.hydra.cookies.sameSiteMode | quote }}
+            - name: SERVE_COOKIES_SAME_SITE_LEGACY_WORKAROUND
+              value: {{ .Values.hydra.cookies.sameSiteLegacyWorkaround | quote }}
+            - name: SERVE_COOKIES_SECURE
+              value: {{ .Values.hydra.cookies.secure | quote }}
+            - name: SERVE_COOKIES_DOMAIN
+              value: {{ .Values.hydra.cookies.domain | quote }}
+            - name: OAUTH2_EXPOSE_INTERNAL_ERRORS
+              value: {{ .Values.hydra.oauth2.exposeInternalErrors | quote }}
+            - name: OAUTH2_PKCE_ENFORCED
+              value: {{ .Values.hydra.oauth2.pkceEnforced | quote }}
+            - name: OAUTH2_PKCE_ENFORCED_FOR_PUBLIC_CLIENTS
+              value: {{ .Values.hydra.oauth2.pkceEnforcedForPublicClients | quote }}
+            - name: TTL_LOGIN_CONSENT_REQUEST
+              value: {{ .Values.hydra.ttl.loginConsentRequest | quote }}
+            - name: TTL_ACCESS_TOKEN
+              value: {{ .Values.hydra.ttl.accessToken | quote }}
+            - name: TTL_REFRESH_TOKEN
+              value: {{ .Values.hydra.ttl.refreshToken | quote }}
+            - name: TTL_ID_TOKEN
+              value: {{ .Values.hydra.ttl.idToken | quote }}
+            - name: TTL_AUTH_CODE
+              value: {{ .Values.hydra.ttl.authCode | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.hydra.log.level | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.hydra.log.format | quote }}
+            - name: LOG_LEAK_SENSITIVE_VALUES
+              value: {{ .Values.hydra.log.leakSensitiveValues | quote }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/hydra
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 4444
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+      volumes:
+        - name: config-volume
+          configMap:
+            name: hydra-config

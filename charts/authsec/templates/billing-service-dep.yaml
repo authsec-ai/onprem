@@ -1,0 +1,129 @@
+{{- if .Values.billingservice.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-billing-service
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-billing-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-billing-service
+    spec:
+      containers:
+        - name: {{ .Release.Name }}-billing-service
+          image: {{ .Values.billingservice.image.repository }}:{{ .Values.billingservice.image.tag }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          env:
+            - name: PORT
+              value: {{.Values.billingservice.port | quote}}
+            - name: DB_HOST
+              value: {{.Values.postgresDb.dbHost | quote}}
+            - name: DB_PORT
+              value: {{.Values.postgresDb.dbPort | quote}}
+            - name: DB_USER
+              value: {{.Values.postgresDb.dbUser | quote}}
+            - name: DB_PASSWORD
+              value: {{.Values.postgresDb.dbPassword | quote}}
+            - name: DB_NAME
+              value: {{.Values.postgresDb.dbName | quote}}
+            - name: DB_SCHEMA
+              value: {{.Values.postgresDb.dbSchema | quote}}
+            - name: JWT_DEF_SECRET
+              value: {{.Values.billingservice.env.jwt_def_secret | quote }}
+            - name: JWT_SDK_SECRET
+              value: {{.Values.billingservice.env.jwt_sdk_secret | quote }}
+            - name: JWT_SECRET
+              value: {{.Values.billingservice.env.jwt_secret | quote }}
+            - name: GIN_MODE
+              value: {{.Values.billingservice.env.gin_mode | quote }}
+            - name: AUTH_MANAGER_URL
+              value: {{.Values.billingservice.env.auth_manager_url | quote }}
+            - name: VAULT_ADDR
+              value: {{.Values.billingservice.env.vault_addr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-credentials
+                  key: long-lived-token
+            - name: CORS_ALLOW_ORIGIN
+              value: {{.Values.billingservice.env.cors_allow_origin | quote }}
+            - name: STRIPE_SECRET_KEY
+              value: {{.Values.billingservice.env.stripe_secret_key | quote }}
+            - name: STRIPE_WEBHOOK_SECRET
+              value: {{.Values.billingservice.env.stripe_webhook_secret | quote }}
+            - name: STRIPE_PAYG_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_payg_price_id | quote }}
+            - name: STRIPE_MAU_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_mau_price_id | quote }}
+            - name: STRIPE_AGENT_TOKENS_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_agent_tokens_price_id | quote }}
+            - name: STRIPE_M2M_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_m2m_price_id | quote }}
+            - name: STRIPE_ADDON_SSO_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_sso_price_id | quote }}
+            - name: STRIPE_ADDON_CUSTOM_DOMAIN_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_custom_domain_price_id | quote }}
+            - name: STRIPE_ADDON_SIEM_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_siem_price_id | quote }}
+            - name: STRIPE_ADDON_EU_RESIDENCY_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_eu_residency_price_id | quote }}
+            - name: STRIPE_ADDON_PKI_BOUNDARY_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_pki_boundary_price_id | quote }}
+            - name: STRIPE_ADDON_BYOK_VAULT_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_byok_vault_price_id | quote }}
+            - name: STRIPE_ADDON_SUPPORT_SLA_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_addon_support_sla_price_id | quote }}
+            - name: STRIPE_BUSINESS_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_business_price_id | quote }}
+            - name: STRIPE_DPI_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_dpi_price_id | quote }}
+            - name: STRIPE_ON_PREMISES_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_on_premises_price_id | quote }}
+            - name: STRIPE_BYOC_PRICE_ID
+              value: {{.Values.billingservice.env.stripe_byoc_price_id | quote }}
+
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ .Values.billingservice.port }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+        - name: {{ .Release.Name }}-log-agent
+          image: {{ .Values.logagent.image.repository }}:{{ .Values.logagent.image.tag }}
+          imagePullPolicy: Always
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MAIN_CONTAINER_NAME
+              value: "{{ .Release.Name }}-billing-service"
+            - name: AGGREGATOR_URL
+              value: "http://{{ .Release.Name }}-log-aggregator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.logaggregator.port }}/logs/push"
+            - name: SEND_INTERVAL
+              value: {{ .Values.logagent.env.sendInterval | quote }}
+            - name: MAX_BATCH_SIZE
+              value: {{ .Values.logagent.env.maxBatchSize | quote }}
+      serviceAccountName: {{ .Release.Namespace }}-sa
+      {{- with .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . }}
+      {{- end }}
+{{- end }}

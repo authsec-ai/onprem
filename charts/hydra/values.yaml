@@ -1,0 +1,78 @@
+# Set by ../deploy.sh from the repository-root .env file.
+global:
+  hosts:
+    oauth: oauth.example.com
+    oauthAdmin: ""        # empty keeps the admin API cluster-internal
+  clusterIssuer: letsencrypt-prod
+  ingressClassName: nginx
+
+# Image configuration
+image:
+  repository: oryd/hydra
+  tag: v2.3.0
+  pullPolicy: IfNotPresent
+
+# Secrets for sensitive data (base64-encoded in the Secret)
+secrets:
+  # plaintext DSN for the ConfigMap; the base64 one below goes into the Secret
+  dsnPlain: "postgres://authsec:CHANGE_ME@postgresql-primary.authsec-data.svc.cluster.local:5432/hydra?sslmode=disable"
+  dsn: cG9zdGdyZXM6Ly9hdXRoc2VjOkNIQU5HRV9NRUBwb3N0Z3Jlc3FsLXByaW1hcnkuYXV0aHNlYy1kYXRhLnN2Yy5jbHVzdGVyLmxvY2FsOjU0MzIvaHlkcmE/c3NsbW9kZT1kaXNhYmxl
+  secretsSystem: Q0hBTkdFX01F
+  secretsCookie: Q0hBTkdFX01F
+  # plaintext copy used by the ConfigMap (the Secret holds the base64 one)
+  pairwiseSaltPlain: "CHANGE_ME"
+  pairwiseSalt: Q0hBTkdFX01F
+
+# Hydra configuration
+hydra:
+  urls:
+    selfIssuer: https://oauth.example.com
+    selfPublic: https://oauth.example.com
+    consent: https://api.example.com/authsec/hmgr/consent
+    login: https://api.example.com/authsec/hmgr/login
+    logout: https://api.example.com/authsec/hmgr/logout
+    registration: https://api.example.com/authsec/hmgr/registration
+    error: https://api.example.com/authsec/hmgr/error
+    postLogoutRedirect: https://api.example.com/authsec/hmgr/
+  cors:
+    enabled: true
+    allowedOrigins: "https://api.example.com,https://www.api.example.com,https://hydra.prod.example.com,https://www.hydra.prod.example.com"
+    allowedMethods: "GET,POST,PUT,DELETE,OPTIONS"
+    allowedHeaders: "Authorization,Content-Type,X-Requested-With,Accept,Origin"
+    allowCredentials: true
+    maxAge: 86400
+  cookies:
+    sameSiteMode: Lax
+    sameSiteLegacyWorkaround: true
+    secure: true
+    domain: api.example.com/authsec/hmgr
+  oauth2:
+    exposeInternalErrors: false
+    pkceEnforced: true
+    pkceEnforcedForPublicClients: true
+  ttl:
+    loginConsentRequest: 30m
+    accessToken: 1h
+    refreshToken: 720h
+    idToken: 1h
+    authCode: 10m
+  log:
+    level: info
+    format: json
+    leakSensitiveValues: false
+  oidc:
+    subjectIdentifiersSupportedTypes: "public,pairwise"
+
+# Deployment configuration
+replicaCount: 1
+service:
+  public:
+    type: ClusterIP
+    port: 4444
+  admin:
+    type: ClusterIP
+    port: 4445
+
+# Job configuration
+migration:
+  backoffLimit: 4

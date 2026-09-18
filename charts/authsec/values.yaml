@@ -1,0 +1,269 @@
+# ---------------------------------------------------------------------------
+# Set by ../deploy.sh from the .env file in the repository root. Editing them
+# here has no effect on a scripted deploy.
+# ---------------------------------------------------------------------------
+global:
+  hosts:
+    app: app.example.com
+    api: api.example.com
+  clusterIssuer: letsencrypt-prod
+  ingressClassName: nginx
+  # Name of a pre-created docker-registry secret. Empty = anonymous pulls.
+  imagePullSecret: ""
+
+replicaCount: 1
+claimName: authsec-pvc
+
+postgresDb:
+  dbHost: "postgresql-primary.authsec-data.svc.cluster.local"
+  dbPort: "5432"
+  dbUser: "authsec"
+  dbPassword: "CHANGE_ME"
+  dbName: "authsec"
+  dbSchema: "public"
+
+smtp:
+  smtpHost: ""
+  smtpPort: "2525"
+  smtpUser: ""
+  smtpPassword: ""
+
+resources:
+  limits:
+    cpu: "0.5"
+    memory: "512Mi"
+  requests:
+    cpu: "0.25"
+    memory: "256Mi"
+    
+logagent:
+  image:
+    repository: docker-repo-public.authnull.com/log-agent
+    tag: production
+  env:
+    sendInterval: "5s"
+    maxBatchSize: "100"
+
+logaggregator:
+  enabled: true
+  port: 7466
+  image:
+    repository: docker-repo-public.authnull.com/log-aggregator
+    tag: production
+  env:
+    fluentBitUrl: "http://fluent-bit.authsec-logging.svc.cluster.local:2020"
+    logLevel: "info"
+    ginMode: "release"
+
+ui:
+  enabled: true
+  port: 3000
+  image:
+    repository: docker-repo-public.authnull.com/ui
+    tag: production
+  env:
+    viteApiUrl:  https://api.example.com  
+
+spireheadless:
+  enabled: false
+  port: 7475
+  image:
+    repository: docker-repo-public.authnull.com/spire-headless
+    tag: production
+  env:
+    log_level: "info"
+    gin_mode: "debug"
+    vault_addr: "http://vault.authsec-vault.svc.cluster.local:8200"
+    vault_namespace: "authsec-vault"
+    jwt_def_secret: "CHANGE_ME" 
+    jwt_sdk_secret: "CHANGE_ME"
+    encryption:
+      key: "CHANGE_ME"  
+       
+minio:
+  mode: standalone
+  resources:
+    requests:
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  image:
+    repository: quay.io/minio/minio
+    tag: latest
+  rootUser: "authsec"
+  rootPassword: "CHANGE_ME"
+  service:
+    port: 9000
+  consoleService:
+    port: 9595
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  environment:
+    MINIO_BROWSER_REDIRECT_URL: "https://minio.example.com"
+  buckets:
+    - name: logs
+      policy: none
+      purge: false
+   
+spireworkloada:
+  enabled: false
+  port: 8086
+  image:
+    repository: docker-repo-public.authnull.com/spire-workload-a
+    tag: production
+  env:
+    spiffe_endpoint_socket: "/run/spire/sockets/agent.sock"
+    node_selector: ""
+    azure_openai_api_key: ""
+    azure_openai_endpoint: ""
+    azure_openai_version: "2024-06-01"
+    azure_openai_deployment_name: "gpt-4o-mini"
+
+spireworkloadb:
+  enabled: false
+  port: 8087
+  image:
+    repository: docker-repo-public.authnull.com/spire-workload-b
+    tag: production
+  env:
+    spiffe_endpoint_socket: "/run/spire/sockets/agent.sock"
+    node_selector: ""
+    azure_openai_api_key: ""
+    azure_openai_endpoint: ""
+    azure_openai_version: "2024-06-01"
+    azure_openai_deployment_name: "gpt-4o-mini"
+
+authsec:
+  enabled: true
+  port: 4331
+  image:
+    repository: docker-repo-public.authnull.com/authsec
+    tag: production
+  env:
+    environment: "development"
+    ginMode: "release"
+    logLevel: "info"
+    # JWT / Token secrets
+    jwtSecret: "CHANGE_ME"
+    jwtDefSecret: "CHANGE_ME"
+    jwtSdkSecret: "CHANGE_ME"
+    # Twilio (SMS MFA)
+    syncConfigEncryptionKey: "CHANGE_ME"
+    twilioAccountSid: ""
+    twilioAuthToken: ""
+    twilioFromNumber: ""
+    # Redis
+    redisUrl: ""
+    # Vault
+    vaultAddr: "http://vault.authsec-vault.svc.cluster.local:8200"
+    # WebAuthn (FIDO2 Passkeys)
+    webauthnRpName: "example.com"
+    webauthnRpId: "app.example.com"
+    webauthnOrigin: "https://app.example.com"
+    webauthnTimeout: "60000"
+    webauthnDebug: "true"
+    totpEncryptionKey: "CHANGE_ME"
+    # CORS
+    corsAllowedOrigin: "*"
+    corsAllowedMethods: "GET, POST, PUT, DELETE, OPTIONS"
+    corsAllowedHeaders: "Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control"
+    corsAllowOrigin: "*"
+    # External service URLs
+    hydraAdminUrl: "http://hydra-admin.authsec-oauth.svc.cluster.local:4445"
+    hydraPublicUrl: "https://oauth.example.com"
+    baseUrl: "https://app.example.com"
+    tenantDomainSuffix: "app.example.com"
+    publicUiOrigin: "https://app.example.com"
+    publicUiBasePath: ""
+    sessionSecret: "CHANGE_ME"
+    oauthAuthUrl: "https://oauth.example.com/oauth2/auth"
+    oauthTokenUrl: "https://oauth.example.com/oauth2/token"
+    oauthUserInfoUrl: "https://oauth.example.com/userinfo"
+    oauthRedirectUri: ""
+    authsecRedirectSource: "db"
+    authsecOidcStateHmacKey: "CHANGE_ME"
+    # OIDC provider credentials
+    googleClientSecret: ""
+    githubClientSecret: ""
+    microsoftClientSecret: ""
+    hubspotAccessToken: ""
+    # OIDC token validation
+    authExpectIss: ""
+    authExpectAud: ""
+    requireServerAuth: "true"
+    # SPIFFE / SVID OIDC
+    spiffeOidcIssuer: ""
+    spiffeJwksKeyId: ""
+    spiffeRsaPrivateKeyB64: ""
+    spiffeTrustDomain: ""
+    # Okta CIBA
+    oktaDomain: ""
+    oktaClientId: ""
+    oktaClientSecret: ""
+    oktaIssuer: ""
+    oktaApiToken: ""
+
+# n8n:
+#   image:
+#     tag: latest
+#   persistence:
+#     enabled: true
+#     size: 2Gi
+#     storageClass: ""
+#   config:
+#     generic:
+#       timezone: "Asia/Kolkata"
+#     log:
+#       level: "info"
+#     webhook:
+#       url: "https://sales.example.com/"
+#   secret:
+#     auth:
+#       active: true
+#       user: "admin"
+#       password: ""
+
+billingservice:
+  enabled: false
+  port: 7010
+  image:
+    repository: docker-repo-public.authnull.com/billing-service
+    tag: production
+  env:
+    jwt_def_secret: "CHANGE_ME"
+    jwt_sdk_secret: "CHANGE_ME"
+    jwt_secret: "CHANGE_ME"
+    gin_mode: "debug"
+    auth_manager_url: "http://localhost:7469"
+    vault_addr: "http://vault.authsec-vault.svc.cluster.local:8200"
+    cors_allow_origin: "http://localhost:3000,https://app.example.com,https://*.example.com"
+    stripe_secret_key: ""
+    stripe_webhook_secret: ""
+    stripe_payg_price_id: "price_1TVueQAPYmGQW9H0T89ozuj3"
+    stripe_mau_price_id: "price_1TVu8aAPYmGQW9H0sqeRtzG3"
+    stripe_agent_tokens_price_id: "price_1TVuXMAPYmGQW9H0Ab6xpyrg"
+    stripe_m2m_price_id: "price_1TVucoAPYmGQW9H055bZfzBA"
+    stripe_addon_sso_price_id: "price_1TVum8APYmGQW9H02lu8Utwm"
+    stripe_addon_custom_domain_price_id: "price_1TVumLAPYmGQW9H0or4jaYCd"
+    stripe_addon_siem_price_id: "price_1TVumZAPYmGQW9H0mDsOvqb3"
+    stripe_addon_eu_residency_price_id: "price_1TVuo9APYmGQW9H0II7ODNUK"
+    stripe_addon_pki_boundary_price_id: "price_1TVuoNAPYmGQW9H0gLOL3fpY"
+    stripe_addon_byok_vault_price_id: "price_1TVuokAPYmGQW9H0zM1KyJQB"
+    stripe_addon_support_sla_price_id: "price_1TVuouAPYmGQW9H00Q2cQRD5"
+    stripe_business_price_id: "price_1TVq09APYmGQW9H0FHNQ5LX5"
+    stripe_dpi_price_id: ""
+    stripe_on_premises_price_id: ""
+    stripe_byoc_price_id: ""
+
+# ---------------------------------------------------------------------------
+# ENCRYPTION_KEY for spire-headless (spireheadless.enabled is true, and
+# templates/Spire-headless-dep.yaml reads this).
+#
+# !!! The value below is the placeholder carried in the upstream chart. It
+# !!! base64-decodes to "thisisatest-key-for-local-dev". REPLACE IT before this
+# !!! environment holds anything real:  openssl rand -base64 32
+# ---------------------------------------------------------------------------
+encryption:
+  key: "CHANGE_ME"

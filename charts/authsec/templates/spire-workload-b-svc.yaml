@@ -1,0 +1,14 @@
+{{- if .Values.spireworkloadb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-spire-workload-b
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-spire-workload-b
+  ports:
+    - protocol: TCP
+      port: {{ .Values.spireworkloadb.port }}
+      targetPort: {{ .Values.spireworkloadb.port }}
+  type: ClusterIP{{- end }}

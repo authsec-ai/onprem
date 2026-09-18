@@ -1,0 +1,15 @@
+{{- if .Values.authsec.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-authsec
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-authsec
+  ports:
+    - protocol: TCP
+      port: {{ .Values.authsec.port }}
+      targetPort: {{ .Values.authsec.port }}
+  type: ClusterIP
+{{- end }}

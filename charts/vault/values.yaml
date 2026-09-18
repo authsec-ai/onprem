@@ -1,0 +1,464 @@
+global:
+  enabled: true
+  namespace: ""
+  imagePullSecrets: []
+  tlsDisable: true
+  externalVaultAddr: ""
+  openshift: false
+  psp:
+    enable: false
+  serverTelemetry:
+    prometheusOperator: false
+
+injector:
+  enabled: true
+  replicas: 1
+  port: 8080
+  leaderElector:
+    enabled: true
+  metrics:
+    enabled: false
+  externalVaultAddr: ""
+  image:
+    repository: "hashicorp/vault-k8s"
+    tag: "1.6.2"
+    pullPolicy: IfNotPresent
+  agentImage:
+    repository: "hashicorp/vault"
+    tag: "1.19.0"
+  agentDefaults:
+    cpuLimit: "500m"
+    cpuRequest: "250m"
+    memLimit: "128Mi"
+    memRequest: "64Mi"
+    template: "map"
+    templateConfig:
+      exitOnRetryFailure: true
+  livenessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 2
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 2
+    successThreshold: 1
+    timeoutSeconds: 5
+  startupProbe:
+    failureThreshold: 12
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 5
+  authPath: "auth/kubernetes"
+  logLevel: "info"
+  logFormat: "standard"
+  revokeOnShutdown: false
+  webhook:
+    failurePolicy: Ignore
+    matchPolicy: Exact
+    timeoutSeconds: 30
+    namespaceSelector: {}
+    objectSelector: |
+      matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values:
+        - {{ template "vault.name" . }}-agent-injector
+    annotations: {}
+  failurePolicy: Ignore
+  namespaceSelector: {}
+  objectSelector: {}
+  webhookAnnotations: {}
+  certs:
+    secretName: null
+    caBundle: ""
+    certName: tls.crt
+    keyName: tls.key
+  securityContext:
+    pod: {}
+    container: {}
+  resources: {}
+  extraEnvironmentVars: {}
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "vault.name" . }}-agent-injector
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+              component: webhook
+          topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints: []
+  tolerations: []
+  nodeSelector: {}
+  priorityClassName: ""
+  annotations: {}
+  extraLabels: {}
+  hostNetwork: false
+  service:
+    annotations: {}
+  serviceAccount:
+    annotations: {}
+  podDisruptionBudget: {}
+  strategy: {}
+
+server:
+  enabled: true
+  
+  enterpriseLicense:
+    secretName: ""
+    secretKey: "license"
+
+  image:
+    repository: "hashicorp/vault"
+    tag: "1.19.0"
+    pullPolicy: IfNotPresent
+
+  updateStrategyType: "OnDelete"
+  logLevel: ""
+  logFormat: ""
+  resources: {}
+
+  ingress:
+    enabled: false
+    labels: {}
+    annotations: {}
+    ingressClassName: ""
+    pathType: Prefix
+    activeService: true
+    hosts:
+      - host: chart-example.local
+        paths: []
+    extraPaths: []
+    tls: []
+
+  hostAliases: []
+
+  route:
+    enabled: false
+    activeService: true
+    labels: {}
+    annotations: {}
+    host: chart-example.local
+    tls:
+      termination: passthrough
+
+  authDelegator:
+    enabled: true
+
+  extraInitContainers: null
+  extraContainers: null
+  shareProcessNamespace: false
+  extraArgs: ""
+  extraPorts: null
+
+  readinessProbe:
+    enabled: true
+    port: 8200
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+
+  livenessProbe:
+    enabled: false
+    execCommand: []
+    path: "/v1/sys/health?standbyok=true"
+    port: 8200
+    failureThreshold: 2
+    initialDelaySeconds: 60
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+
+  terminationGracePeriodSeconds: 10
+  preStopSleepSeconds: 5
+  preStop: []
+  postStart: []
+  extraEnvironmentVars: {}
+  extraSecretEnvironmentVars: []
+  extraVolumes: []
+
+  # CRITICAL: These must be null to use chart defaults for data storage
+  volumes: null
+  volumeMounts: null
+
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "vault.name" . }}
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+              component: server
+          topologyKey: kubernetes.io/hostname
+
+  topologySpreadConstraints: []
+  tolerations: []
+  nodeSelector: {}
+
+  networkPolicy:
+    enabled: false
+    egress: []
+    ingress:
+      - from:
+        - namespaceSelector: {}
+        ports:
+        - port: 8200
+          protocol: TCP
+        - port: 8201
+          protocol: TCP
+
+  priorityClassName: ""
+  extraLabels: {}
+  annotations: {}
+  includeConfigAnnotation: false
+
+  service:
+    enabled: true
+    active:
+      enabled: true
+      annotations: {}
+    standby:
+      enabled: true
+      annotations: {}
+    instanceSelector:
+      enabled: true
+    ipFamilyPolicy: ""
+    ipFamilies: []
+    publishNotReadyAddresses: true
+    externalTrafficPolicy: Cluster
+    port: 8200
+    targetPort: 8200
+    annotations: {}
+
+  # Production: Enable persistent storage
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    mountPath: "/vault/data"
+    storageClass: null
+    accessMode: ReadWriteOnce
+    annotations: {}
+    labels: {}
+
+  persistentVolumeClaimRetentionPolicy: {}
+
+  auditStorage:
+    enabled: false
+    size: 10Gi
+    mountPath: "/vault/audit"
+    storageClass: null
+    accessMode: ReadWriteOnce
+    annotations: {}
+    labels: {}
+
+  # IMPORTANT: Dev mode DISABLED for production
+  dev:
+    enabled: false
+    devRootToken: "root"
+
+  # Production: Standalone mode with file storage
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      
+      storage "file" {
+        path = "/vault/data"
+      }
+      
+      max_lease_ttl = "8760h"
+      default_lease_ttl = "8760h"
+
+  ha:
+    enabled: false
+    replicas: 3
+    apiAddr: null
+    clusterAddr: null
+    raft:
+      enabled: false
+      setNodeId: false
+      config: |
+        ui = true
+        listener "tcp" {
+          tls_disable = 1
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+        storage "raft" {
+          path = "/vault/data"
+        }
+        max_lease_ttl = "8760h"
+        default_lease_ttl = "8760h"
+        service_registration "kubernetes" {}
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "consul" {
+        path = "vault"
+        address = "HOST_IP:8500"
+      }
+      max_lease_ttl = "8760h"
+      default_lease_ttl = "8760h"
+      service_registration "kubernetes" {}
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: null
+
+  serviceAccount:
+    create: true
+    name: ""
+    createSecret: false
+    annotations: {}
+    extraLabels: {}
+    serviceDiscovery:
+      enabled: true
+
+  statefulSet:
+    annotations: {}
+    securityContext:
+      pod: {}
+      container: {}
+
+  hostNetwork: false
+
+  # Vault automatic initialization and policy setup
+  vaultInit:
+    enabled: true
+    username: "vaultadmin"
+    password: "CHANGE_ME"
+    kvPath: "kv"
+    tokenTTL: "8760h"
+    
+    # Policies to create (true = create, false = skip)
+    policies:
+      admin-policy: false
+      agent-policy: true
+      agent-workload: true
+      authsec-services: true
+      icp-admin: true
+      user-flow-secrets: true
+      workload-policy: true
+    
+    # Policies assigned to the generated token (comma-separated).
+    # Used for the userpass user AND the long-lived token; nothing is hardcoded
+    # in the templates.
+    tokenPolicies: "authsec-services,user-flow-secrets"
+
+    # Namespaces the <release>-credentials secret is copied into. The secret
+    # keeps its name, which is derived from the release, so it follows the
+    # deployment name automatically. ../deploy.sh overrides this with its
+    # own NS_AUTHSEC. Empty list = do not sync anywhere.
+    syncNamespaces:
+      - authsec
+
+  # Auto-unseal sidecar configuration
+  # When enabled, a sidecar container runs alongside the Vault server
+  # that automatically unseals Vault using the Shamir key stored in
+  # the <release>-init-keys Kubernetes secret. No cloud KMS dependency.
+  autoUnseal:
+    enabled: true
+    image:
+      repository: "hashicorp/vault"
+      tag: "1.19.0"
+    # How often (in seconds) the sidecar checks if Vault is sealed
+    checkIntervalSeconds: 10
+
+ui:
+  enabled: false
+  publishNotReadyAddresses: true
+  activeVaultPodOnly: false
+  serviceType: "ClusterIP"
+  serviceNodePort: null
+  externalPort: 8200
+  targetPort: 8200
+  serviceIPFamilyPolicy: ""
+  serviceIPFamilies: []
+  externalTrafficPolicy: Cluster
+  annotations: {}
+
+csi:
+  enabled: false
+  image:
+    repository: "hashicorp/vault-csi-provider"
+    tag: "1.5.0"
+    pullPolicy: IfNotPresent
+  volumes: null
+  volumeMounts: null
+  resources: {}
+  hmacSecretName: ""
+  hostNetwork: false
+  daemonSet:
+    updateStrategy:
+      type: RollingUpdate
+      maxUnavailable: ""
+    annotations: {}
+    providersDir: "/etc/kubernetes/secrets-store-csi-providers"
+    kubeletRootDir: "/var/lib/kubelet"
+    extraLabels: {}
+    securityContext:
+      pod: {}
+      container: {}
+  pod:
+    annotations: {}
+    tolerations: []
+    nodeSelector: {}
+    affinity: {}
+    extraLabels: {}
+  agent:
+    enabled: true
+    extraArgs: []
+    image:
+      repository: "hashicorp/vault"
+      tag: "1.19.0"
+      pullPolicy: IfNotPresent
+    logFormat: standard
+    logLevel: info
+    resources: {}
+  priorityClassName: ""
+  serviceAccount:
+    annotations: {}
+    extraLabels: {}
+  readinessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+  livenessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+  logLevel: "info"
+  debug: false
+  extraArgs: []
+
+serverTelemetry:
+  serviceMonitor:
+    enabled: false
+    selectors: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    tlsConfig: {}
+    authorization: {}
+  prometheusRules:
+    enabled: false
+    selectors: {}
+    rules: []

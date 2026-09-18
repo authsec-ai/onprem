@@ -1,0 +1,79 @@
+{{- if (empty .Values.existingConfigMap) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fluent-bit.configuration.configMap" . }}
+  namespace: {{ include "common.names.namespace" . | quote }}
+  labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
+    app.kubernetes.io/part-of: fluent-bit
+  {{- if .Values.commonAnnotations }}
+  annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
+  {{- end }}
+data:
+  fluent-bit.conf: |-
+    [SERVICE]
+        Flush             {{ .Values.config.flush }}
+        Log_Level         {{ .Values.config.logLevel }}
+        Parsers_File      /opt/bitnami/fluent-bit/conf/parsers.conf
+        HTTP_Server       On
+        HTTP_Listen       0.0.0.0
+        HTTP_Port         {{ .Values.containerPorts.http }}
+        Hot_Reload        On
+    @INCLUDE dynamic-connectors.conf
+
+    {{- range .Values.config.inputs }}
+    [INPUT]
+        Name              {{ .name }}
+        {{- range $key, $value := .options }}
+        {{ $key }}        {{ $value }}
+        {{- end }}
+    {{- end }}
+
+    {{- if .Values.config.filters }}
+    {{- range .Values.config.filters }}
+    [FILTER]
+        Name              {{ .name }}
+        {{- range $key, $value := .options }}
+        {{ $key }}        {{ $value }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+
+    {{- range .Values.config.outputs }}
+    [OUTPUT]
+        Name              {{ .name }}
+        {{- range $key, $value := .options }}
+        {{ $key }}        {{ $value }}
+        {{- end }}
+    {{- end }}
+
+
+  dynamic-connectors.conf: |-
+    # Dynamic connectors
+
+  parsers.conf: |-
+    {{- if .Values.config.parsers }}
+    {{- range .Values.config.parsers }}
+    [PARSER]
+        Name              {{ .name }}
+        {{- range $key, $value := .options }}
+        {{ $key }}        {{ $value }}
+        {{- end }}
+    {{- end }}
+    {{- else }}
+    # Default parsers
+    [PARSER]
+        Name              json
+        Format            json
+        Time_Key          time
+        Time_Format       %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep         On
+    
+    [PARSER]
+        Name              docker
+        Format            json
+        Time_Key          time
+        Time_Format       %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep         On
+    {{- end }}
+{{- end }}

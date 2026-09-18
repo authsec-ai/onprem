@@ -1,0 +1,5 @@
+apiVersion: v2
+name: hydra
+description: A Helm chart for deploying Ory Hydra OAuth2 server
+version: 0.1.0
+appVersion: "v2.3.0"

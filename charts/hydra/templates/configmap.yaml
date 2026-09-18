@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hydra-config
+  namespace: {{ .Release.Namespace }}
+data:
+  hydra.yml: |
+    version: v1.11.0
+
+    dsn: {{ .Values.secrets.dsnPlain }}
+
+    serve:
+      public:
+        port: 4444
+        host: 0.0.0.0
+        cors:
+          enabled: true
+          allowed_origins:
+            - "*"
+          allowed_methods:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - OPTIONS
+          allowed_headers:
+            - Authorization
+            - Content-Type
+            - Accept
+          exposed_headers:
+            - Content-Type
+            - Cache-Control
+          allow_credentials: true
+          debug: true
+          max_age: 86400
+      admin:
+        port: 4445
+        host: 0.0.0.0
+      cookies:
+        same_site_mode: Lax
+        same_site_legacy_workaround: true
+        domain: ""
+        paths:
+          session: /
+        secure: false
+
+    urls:
+      self:
+        issuer: {{ .Values.hydra.urls.selfIssuer }}
+        public: {{ .Values.hydra.urls.selfPublic }}
+      consent: {{ .Values.hydra.urls.consent }}
+      login: {{ .Values.hydra.urls.login }}
+      logout: {{ .Values.hydra.urls.logout }}
+      registration: {{ .Values.hydra.urls.registration }}
+      error: {{ .Values.hydra.urls.error }}
+      post_logout_redirect: {{ .Values.hydra.urls.postLogoutRedirect }}
+
+    # secrets.system / secrets.cookie come from the Secret as env vars
+    # (SECRETS_SYSTEM / SECRETS_COOKIE); env takes precedence over this file,
+    # so they are deliberately not written into a ConfigMap.
+
+    oidc:
+      subject_identifiers:
+        supported_types:
+          - pairwise
+          - public
+        pairwise:
+          salt: {{ .Values.secrets.pairwiseSaltPlain | quote }}
+      dynamic_client_registration:
+        enabled: false
+
+    oauth2:
+      expose_internal_errors: true
+      hashers:
+        bcrypt:
+          cost: 12
+      pkce:
+        enforced: false
+        enforced_for_public_clients: false
+      session:
+        encrypt_at_rest: true
+
+    webfinger:
+      jwks:
+        broadcast_keys:
+          - hydra.openid.id-token
+      oidc_discovery:
+        client_registration_url: ""
+        supported_claims:
+          - sub
+          - email
+          - email_verified
+          - name
+          - family_name
+          - given_name
+          - picture
+        supported_scope:
+          - offline
+          - offline_access
+          - openid
+          - profile
+          - email
+
+    log:
+      level: debug
+      format: json
+      leak_sensitive_values: true
+
+    strategies:
+      access_token: jwt
+      scope: wildcard
+
+    ttl:
+      login_consent_request: 1h
+      access_token: 1h
+      refresh_token: 720h
+      id_token: 1h
+      auth_code: 10m
+
+    hsm:
+      enabled: false

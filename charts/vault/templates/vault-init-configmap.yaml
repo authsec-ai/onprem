@@ -1,0 +1,230 @@
+{{- if ne .mode "external" }}
+{{- if .serverEnabled -}}
+{{- if .Values.server.vaultInit.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "vault.fullname" . }}-init-script
+  namespace: {{ include "vault.namespace" . }}
+  labels:
+    helm.sh/chart: {{ include "vault.chart" . }}
+    app.kubernetes.io/name: {{ include "vault.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  init.sh: |-
+    #!/bin/sh
+    set -e
+
+    echo "Waiting for Vault pod to be running..."
+    until vault status 2>&1 | grep -q "Sealed\|Initialized"; do
+      echo "Vault pod not ready yet, waiting..."
+      sleep 2
+    done
+    echo "Vault pod is running!"
+
+    # Check if Vault is already initialized
+    if vault status 2>&1 | grep -q "Initialized.*false"; then
+      echo "Vault is not initialized. Initializing..."
+      INIT_OUTPUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json)
+      UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
+      ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+
+      echo "Vault initialized successfully!"
+      echo "Unsealing Vault with generated key..."
+      vault operator unseal "$UNSEAL_KEY"
+
+      # Store init keys in secret immediately
+      kubectl create secret generic {{ template "vault.fullname" . }}-init-keys \
+        --from-literal=unseal-key="$UNSEAL_KEY" \
+        --from-literal=root-token="$ROOT_TOKEN" \
+        --dry-run=client -o yaml | kubectl apply -f -
+      echo "Init keys stored in secret '{{ template "vault.fullname" . }}-init-keys'"
+    else
+      echo "Vault is already initialized"
+
+      # Get stored keys from secret
+      echo "Retrieving unseal key and root token from secret..."
+      UNSEAL_KEY=$(kubectl get secret {{ template "vault.fullname" . }}-init-keys -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d || echo "")
+      ROOT_TOKEN=$(kubectl get secret {{ template "vault.fullname" . }}-init-keys -o jsonpath='{.data.root-token}' 2>/dev/null | base64 -d || echo "")
+
+      if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
+        echo "ERROR: Vault is initialized but unseal keys are missing!"
+        echo "Manual intervention required. Check the {{ template "vault.fullname" . }}-init-keys secret."
+        exit 1
+      fi
+
+      # Unseal if needed
+      if vault status 2>&1 | grep -q "Sealed.*true"; then
+        echo "Vault is sealed. Unsealing..."
+        vault operator unseal "$UNSEAL_KEY"
+      else
+        echo "Vault is already unsealed"
+      fi
+    fi
+    
+    # Wait for Vault to be ready after unsealing
+    echo "Waiting for Vault to be fully ready..."
+    until vault status > /dev/null 2>&1; do
+      echo "Waiting for Vault to accept connections..."
+      sleep 2
+    done
+    
+    echo "Logging in with root token..."
+    vault login "$ROOT_TOKEN"
+    
+    echo "Enabling KV2 secrets engine..."
+    vault secrets enable -path={{ .Values.server.vaultInit.kvPath }} -version=2 kv || echo "KV2 already enabled"
+    
+    echo "Tuning token auth max lease TTL..."
+    vault auth tune -max-lease-ttl={{ .Values.server.vaultInit.tokenTTL }} token || echo "Token auth already tuned"
+    
+    echo "Creating Vault policies..."
+{{ if (index .Values.server.vaultInit.policies "agent-policy") }}    vault policy write agent-policy - <<'EOFPOLICY'
+    path "*/sign/agent" { capabilities = ["create", "update"] }
+    path "*/sign/workload" { capabilities = ["create", "update"] }
+    path "*/issue/workload" { capabilities = ["create", "update"] }
+    path "*/cert/ca" { capabilities = ["read"] }
+    path "*/ca/pem" { capabilities = ["read"] }
+    path "*/roles/agent" { capabilities = ["read"] }
+    path "*/roles/workload" { capabilities = ["read"] }
+    path "*/certs" { capabilities = ["list", "read"] }
+    path "*/revoke" { capabilities = ["create", "update"] }
+    EOFPOLICY
+{{ end }}{{ if (index .Values.server.vaultInit.policies "agent-workload") }}    vault policy write agent-workload - <<'EOFPOLICY'
+    path "pki/+/ca/pem" { capabilities = ["read"] }
+    path "pki/+/cert/ca" { capabilities = ["read"] }
+    path "pki/+/issue/*" { capabilities = ["create", "update"] }
+    path "pki/+/sign/*" { capabilities = ["create", "update"] }
+    path "pki/+/revoke" { capabilities = ["create", "update"] }
+    path "pki/+/crl" { capabilities = ["read"] }
+    path "pki/+/crl/pem" { capabilities = ["read"] }
+    EOFPOLICY
+{{ end }}{{ if (index .Values.server.vaultInit.policies "authsec-services") }}    vault policy write authsec-services - <<'EOFPOLICY'
+    path "auth/token/lookup-self" { capabilities = ["read"] }
+    path "auth/token/renew-self" { capabilities = ["update"] }
+    path "kv/data/secret/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/metadata/secret/*" { capabilities = ["list", "read", "delete"] }
+    path "kv/data/oidc/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/metadata/oidc/*" { capabilities = ["list", "read", "delete"] }
+    path "sys/mounts/pki/*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }
+    path "sys/mounts" { capabilities = ["read", "list"] }
+    path "pki/+/root/generate/*" { capabilities = ["create", "read", "update", "sudo"] }
+    path "+/root/generate/*" { capabilities = ["create", "read", "update", "sudo"] }
+    path "pki/+/roles/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "+/roles/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "pki/+/issue/*" { capabilities = ["create", "update"] }
+    path "+/issue/*" { capabilities = ["create", "update"] }
+    path "pki/+/sign/*" { capabilities = ["create", "update"] }
+    path "+/sign/*" { capabilities = ["create", "update"] }
+    path "pki/+/cert/ca" { capabilities = ["read"] }
+    path "+/cert/ca" { capabilities = ["read"] }
+    path "pki/+/ca/pem" { capabilities = ["read"] }
+    path "+/ca/pem" { capabilities = ["read"] }
+    path "pki/+/certs" { capabilities = ["list", "read"] }
+    path "+/certs" { capabilities = ["list", "read"] }
+    path "pki/+/revoke" { capabilities = ["create", "update"] }
+    path "+/revoke" { capabilities = ["create", "update"] }
+    path "pki/+/crl/rotate" { capabilities = ["update"] }
+    path "+/crl/rotate" { capabilities = ["update"] }
+    path "pki/+/config/crl" { capabilities = ["create", "read", "update"] }
+    path "+/config/crl" { capabilities = ["create", "read", "update"] }
+    EOFPOLICY
+{{ end }}{{ if (index .Values.server.vaultInit.policies "icp-admin") }}    vault policy write icp-admin - <<'EOFPOLICY'
+    path "sys/mounts/pki/*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }
+    path "sys/mounts/pki" { capabilities = ["read", "list"] }
+    path "sys/mounts" { capabilities = ["read", "list"] }
+    path "pki/+/root/generate/*" { capabilities = ["create", "read", "update", "sudo"] }
+    path "+/root/generate/*" { capabilities = ["create", "read", "update", "sudo"] }
+    path "pki/+/roles/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "+/roles/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "pki/+/issue/*" { capabilities = ["create", "update"] }
+    path "+/issue/*" { capabilities = ["create", "update"] }
+    path "pki/+/sign/*" { capabilities = ["create", "update"] }
+    path "+/sign/*" { capabilities = ["create", "update"] }
+    path "pki/+/cert/ca" { capabilities = ["read"] }
+    path "+/cert/ca" { capabilities = ["read"] }
+    path "pki/+/ca/pem" { capabilities = ["read"] }
+    path "+/ca/pem" { capabilities = ["read"] }
+    path "pki/+/certs" { capabilities = ["list", "read"] }
+    path "+/certs" { capabilities = ["list", "read"] }
+    path "pki/+/revoke" { capabilities = ["create", "update"] }
+    path "+/revoke" { capabilities = ["create", "update"] }
+    path "pki/+/crl/rotate" { capabilities = ["update"] }
+    path "+/crl/rotate" { capabilities = ["update"] }
+    path "pki/+/config/crl" { capabilities = ["create", "read", "update"] }
+    path "+/config/crl" { capabilities = ["create", "read", "update"] }
+    EOFPOLICY
+{{ end }}{{ if (index .Values.server.vaultInit.policies "user-flow-secrets") }}    vault policy write user-flow-secrets - <<'EOFPOLICY'
+    path "auth/token/lookup-self" { capabilities = ["read"] }
+    path "auth/token/renew-self" { capabilities = ["update"] }
+    path "auth/token/lookup" { capabilities = ["read", "update"] }
+    path "kv/data/secret/*" { capabilities = ["create", "update", "read", "delete"] }
+    path "kv/metadata/secret/*" { capabilities = ["list", "read", "delete"] }
+    path "sys/health" { capabilities = ["read", "sudo"] }
+    path "sys/capabilities-self" { capabilities = ["read", "update"] }
+    EOFPOLICY
+{{ end }}{{ if (index .Values.server.vaultInit.policies "workload-policy") }}    vault policy write workload-policy - <<'EOFPOLICY'
+    path "*/sign/workload" { capabilities = ["create", "update"] }
+    path "*/issue/workload" { capabilities = ["create", "update"] }
+    path "*/cert/ca" { capabilities = ["read"] }
+    path "*/ca/pem" { capabilities = ["read"] }
+    path "*/roles/workload" { capabilities = ["read"] }
+    EOFPOLICY
+{{ end }}    echo "All policies created successfully!"
+    
+    echo "Enabling userpass auth method..."
+    vault auth enable userpass || echo "Userpass already enabled"
+    
+    echo "Creating user..."
+    vault write auth/userpass/users/${VAULT_USERNAME} \
+      password="${VAULT_PASSWORD}" \
+      token_policies="{{ .Values.server.vaultInit.tokenPolicies }}" \
+      token_ttl="{{ .Values.server.vaultInit.tokenTTL }}" \
+      token_max_ttl="{{ .Values.server.vaultInit.tokenTTL }}"
+    
+    echo "Creating long-lived token..."
+    # -policy flags built from the same value, so the token and the userpass
+    # user can never drift apart.
+    POLICY_FLAGS=""
+    for _p in $(echo "{{ .Values.server.vaultInit.tokenPolicies }}" | tr ',' ' '); do
+      POLICY_FLAGS="$POLICY_FLAGS -policy=$_p"
+    done
+    LONG_TOKEN=$(vault token create $POLICY_FLAGS -ttl="{{ .Values.server.vaultInit.tokenTTL }}" -explicit-max-ttl="{{ .Values.server.vaultInit.tokenTTL }}" -renewable=true -format=json | jq -r '.auth.client_token')
+    
+    if [ -z "$LONG_TOKEN" ]; then echo "ERROR: Failed to create token!"; exit 1; fi
+    
+    echo "Verifying token..."
+    TOKEN_POLICIES=$(vault token lookup $LONG_TOKEN -format=json | jq -r '.data.policies[]' 2>/dev/null)
+    echo "Token policies: $TOKEN_POLICIES"
+    
+    vault login $LONG_TOKEN
+    vault token lookup-self > /dev/null 2>&1 && echo "✓ Token can lookup self" || echo "✗ Token CANNOT lookup self"
+    vault kv list {{ .Values.server.vaultInit.kvPath }}/ > /dev/null 2>&1 && echo "✓ Token can list KV" || echo "✗ Token CANNOT list KV"
+    
+    vault login "$ROOT_TOKEN"
+    
+    echo "================================================"
+    echo "Vault Initialization Complete!"
+    echo "KV2 Engine: Enabled at '{{ .Values.server.vaultInit.kvPath }}/'"
+    echo "Policies Created:"
+{{ range $policy, $enabled := .Values.server.vaultInit.policies }}{{ if $enabled }}    echo "  - {{ $policy }}"
+{{ end }}{{ end }}    echo "Username: ${VAULT_USERNAME}"
+    echo "Token Policies: {{ .Values.server.vaultInit.tokenPolicies }}"
+    echo "Long-lived Token: ${LONG_TOKEN}"
+    echo "Token TTL: {{ .Values.server.vaultInit.tokenTTL }}"
+    echo "================================================"
+    
+    kubectl create secret generic {{ template "vault.fullname" . }}-credentials \
+      --from-literal=username="${VAULT_USERNAME}" \
+      --from-literal=password="${VAULT_PASSWORD}" \
+      --from-literal=long-lived-token="${LONG_TOKEN}" \
+      --from-literal=root-token="$ROOT_TOKEN" \
+      --from-literal=unseal-key="$UNSEAL_KEY" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    
+    echo "Credentials stored in secret '{{ template "vault.fullname" . }}-credentials'"
+    echo "Initialization completed successfully!"
+{{- end }}
+{{- end }}
+{{- end }}
